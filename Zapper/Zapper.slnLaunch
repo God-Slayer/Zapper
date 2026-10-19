@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "Zapper + Acme Stub",
+    "Projects": [
+      {
+        "Path": "src\\Zapper.Api\\Zapper.Api.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "src\\AcmeStub.Api\\AcmeStub.Api.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

@@ -1,0 +1,99 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: zapper
+      POSTGRES_USER: zapper
+      POSTGRES_PASSWORD: zapper_local_only
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zapper -d zapper"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  seq:
+    image: datalust/seq:2025.2
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_ADMINUSERNAME: admin
+      SEQ_FIRSTRUN_ADMINPASSWORD: zapper-local-seq-admin
+      SEQ_FIRSTRUN_REQUIREAUTHENTICATIONFORHTTPINGESTION: "False"
+    ports:
+      - "127.0.0.1:5341:80"
+      - "127.0.0.1:5342:5341"
+    volumes:
+      - seq_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost/health > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  acme-stub:
+    build:
+      context: ./Zapper
+      dockerfile: src/AcmeStub.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ACME_API_KEY: local-acme-api-key
+      ACME_ADVICE_USERNAME: local-advice-user
+      ACME_ADVICE_PASSWORD: local-advice-password
+      ACME_WEBHOOK_SECRET: local-acme-webhook-secret
+      ZAPPER_CALLBACK_BASE_URL: http://api:8080
+    ports:
+      - "127.0.0.1:5291:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/health > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./Zapper
+      dockerfile: src/Zapper.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Zapper: Host=postgres;Port=5432;Database=zapper;Username=zapper;Password=zapper_local_only
+      Database__ApplyMigrations: "true"
+      AcmePay__BaseUrl: ${ACME_PAY_BASE_URL:-http://acme-stub:8080}
+      AcmePay__ApiKey: local-acme-api-key
+      AcmePay__MerchantId: 8b67bf88-bb8d-4eb5-adfc-0f5c97c7ed67
+      AcmePay__FacilitatorName: ZAP
+      AcmePay__TimeoutSeconds: 8
+      AcmeNotifications__AdviceUsername: local-advice-user
+      AcmeNotifications__AdvicePassword: local-advice-password
+      AcmeNotifications__WebhookSecret: local-acme-webhook-secret
+      Seq__ServerUrl: http://seq:5341
+    ports:
+      - "127.0.0.1:5280:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seq:
+        condition: service_healthy
+      acme-stub:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/health/live > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  seq_data:

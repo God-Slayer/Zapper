@@ -1,0 +1,1532 @@
+{
+  "info": {
+    "_postman_id": "d5829e37-0ff4-4ff4-9bb9-c847ee61db0e",
+    "name": "Zapper Assignment Demo",
+    "description": "Ordered local demo flows for Zapper API and Acme stub. Start the local stack first. Run requests in order within each folder; variables are generated and passed between requests automatically. Stub control endpoints are development-only simulator controls. No card data is included.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "apiUrl",
+      "value": "http://localhost:5280",
+      "type": "string"
+    },
+    {
+      "key": "stubUrl",
+      "value": "http://localhost:5291",
+      "type": "string"
+    },
+    {
+      "key": "customerId",
+      "value": "ea238ea1-0fd8-4c55-bfeb-27fb2ea96f30",
+      "type": "string"
+    },
+    {
+      "key": "subMerchantId",
+      "value": "ZAP000000000001",
+      "type": "string"
+    },
+    {
+      "key": "currencyCode",
+      "value": "ZAR",
+      "type": "string"
+    },
+    {
+      "key": "merchantId",
+      "value": "8b67bf88-bb8d-4eb5-adfc-0f5c97c7ed67",
+      "type": "string"
+    },
+    {
+      "key": "acmeApiKey",
+      "value": "local-acme-api-key",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Readiness and reset",
+      "description": "Start with `docker compose up --build -d --wait` from the repository root, or start PostgreSQL and Seq then launch Visual Studio's `Zapper + Acme Stub` profile. Local ports: API 5280, stub 5291.",
+      "item": [
+        {
+          "name": "Zapper liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/health/live"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Zapper is live', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Zapper readiness (PostgreSQL)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/health/ready",
+            "description": "Readiness checks the database connection."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Zapper database is ready', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Acme stub health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Acme stub is healthy', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset Acme default scenario to Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"Approved\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Default outcome reset', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 - Approved payment and idempotency",
+      "description": "Run requests in order: approve, capture the provider transaction ID, query Zapper, replay the exact same request, then change one field under the same appPaymentId to see the conflict.",
+      "item": [
+        {
+          "name": "Ensure default outcome is Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Submit approved payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{approvalAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{approvalAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('approvalAppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('approvalAmount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Payment is approved', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture approved transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Transaction list loaded', function () { pm.response.to.have.status(200); });",
+                  "var n=Number(pm.collectionVariables.get('approvalAmount')); var m=pm.response.json().filter(function(t){return Number(t.amount)===n;});",
+                  "pm.test('Unique demo transaction found', function () { pm.expect(m.length).to.eql(1); });",
+                  "if(m.length) pm.collectionVariables.set('approvalTransactionId', m[0].transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get approved payment",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/api/payments/{{approvalAppPaymentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Payment lookup is approved', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Replay exact same payment request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{approvalAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{approvalAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments",
+            "description": "Same ID and same body should replay the stored result without creating another provider transaction."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Exact replay returns stored payment', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().appPaymentId).to.eql(pm.collectionVariables.get('approvalAppPaymentId')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reuse appPaymentId with changed amount",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{conflictAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{approvalAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('conflictAmount', String(Number(pm.collectionVariables.get('approvalAmount')) + 1));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Changed request rejected as idempotency conflict', function () { pm.response.to.have.status(409); pm.expect(pm.response.json().code).to.eql('IDEMPOTENCY_CONFLICT'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 - Decline and pending PEND",
+      "description": "Demonstrates a business decline and the asynchronous PEND flow. Zapper first records Processing/PEND; the stub outcome is then changed to Approved, it sends a Payment Advice callback, and Zapper moves the payment to Approved.",
+      "item": [
+        {
+          "name": "Set scenario InsufficientFunds",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"InsufficientFunds\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Submit declined payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{declineAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{declineAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('declineAppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('declineAmount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Payment declined', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('Declined'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set scenario EftPending",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"EftPending\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Submit pending PEND payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{pendingAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{pendingAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments",
+            "description": "Acme returns Processing/PEND; Zapper stores local status Processing."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('pendingAppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('pendingAmount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('PEND is represented as Processing', function () { pm.response.to.have.status(202); pm.expect(pm.response.json().status).to.eql('Processing'); pm.expect(pm.response.json().acmeResponseCode).to.eql('PEND'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture pending transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var n=Number(pm.collectionVariables.get('pendingAmount')); var m=pm.response.json().filter(function(t){return Number(t.amount)===n;}); pm.test('Pending stub transaction found', function(){pm.expect(m.length).to.eql(1);}); if(m.length)pm.collectionVariables.set('pendingTransactionId',m[0].transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get pending payment (manual reconciliation check)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/api/payments/{{pendingAppPaymentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Still pending/processing', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('Processing'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change pending provider transaction to Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/transactions/{{pendingTransactionId}}/scenario",
+            "description": "Updates this already-created provider transaction, so the following callback carries Success/00. It does not create a new payment."
+          }
+        },
+        {
+          "name": "Stub sends approved Payment Advice",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions/{{pendingTransactionId}}/payment-advice",
+            "description": "Stub sends an authenticated Payment Advice callback with Success/00 to Zapper. No manual callback credentials are needed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Stub delivered approval advice', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().deliveries[0].statusCode).to.eql(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get payment after approval advice",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/api/payments/{{pendingAppPaymentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Payment Advice moved payment to Approved', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('Approved'); pm.expect(pm.response.json().acmeResponseCode).to.eql('00'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset scenario to Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Payment Advice, refund, and reversal callbacks",
+      "description": "Self-contained notification demo: create an approved payment, capture its Acme transaction ID, send duplicate and stale Payment Advice, apply a partial refund, then create a second approved payment and reverse it. The stub sends authenticated/signed callbacks to Zapper.",
+      "item": [
+        {
+          "name": "Ensure default outcome is Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Create approved payment for advice and refund",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{callbackBaseAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{callbackBaseAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('callbackBaseAppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('callbackBaseAmount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Callback source payment is approved', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture advice/refund transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var n=Number(pm.collectionVariables.get('callbackBaseAmount')); var m=pm.response.json().filter(function(t){return Number(t.amount)===n;}); pm.test('Advice/refund transaction found', function(){pm.expect(m.length).to.eql(1);}); if(m.length)pm.collectionVariables.set('callbackBaseTransactionId',m[0].transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send duplicate Payment Advice",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions/{{callbackBaseTransactionId}}/payment-advice?duplicate=true",
+            "description": "Sends the same advice callback twice to Zapper."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Stub sent two successful callback deliveries', function () { pm.response.to.have.status(200); var d=pm.response.json().deliveries; pm.expect(d.length).to.eql(2); pm.expect(d.every(function(x){return x.statusCode===200;})).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send stale Payment Advice",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions/{{callbackBaseTransactionId}}/payment-advice?stale=true",
+            "description": "Sends advice with an old provider timestamp to exercise stale notification handling."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Stub delivered stale advice to Zapper', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().deliveries[0].statusCode).to.eql(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send signed partial refund notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionType\": \"Refund\",\n  \"transactionAmount\": {{callbackRefundAmount}},\n  \"approved\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/transactions/{{callbackBaseTransactionId}}/transaction-status",
+            "description": "Stub signs and delivers a partial refund callback using a generated amount in minor currency units; original payment must be approved."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('callbackRefundAmount', String(300 + Math.floor(Math.random() * 4701))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Stub delivered refund callback to Zapper', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().statusCode).to.eql(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get payment after refund callback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/api/payments/{{callbackBaseAppPaymentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Partial refund is reflected on the payment', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('PartiallyRefunded'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit separate approved payment for reversal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{reversalAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{reversalAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('reversalAppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('reversalAmount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Separate original payment approved', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture reversal transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var n=Number(pm.collectionVariables.get('reversalAmount')); var m=pm.response.json().filter(function(t){return Number(t.amount)===n;}); pm.test('Reversal transaction found', function(){pm.expect(m.length).to.eql(1);}); if(m.length)pm.collectionVariables.set('reversalTransactionId',m[0].transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send signed reversal notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionType\": \"Reversal\",\n  \"approved\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/transactions/{{reversalTransactionId}}/transaction-status",
+            "description": "Stub signs and delivers a full reversal callback for a separate approved payment."
+          }
+        },
+        {
+          "name": "Get payment after reversal callback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/api/payments/{{reversalAppPaymentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Reversal is reflected on the payment', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('Reversed'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 - Timeout and reconciliation",
+      "description": "The API call takes about the configured eight-second timeout. The stub records the transaction but drops the submission response. Zapper's timeout reconciliation query finds it as Processing/PEND; then change that stored provider result to Approved and use GET to reconcile again.",
+      "item": [
+        {
+          "name": "Set scenario Timeout",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Timeout\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Submit timeout payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{timeoutAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{timeoutAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('timeoutAppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('timeoutAmount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Timed-out submission is reconciled as provider pending', function () { pm.response.to.have.status(202); pm.expect(pm.response.json().status).to.eql('Processing'); pm.expect(pm.response.json().acmeResponseCode).to.eql('PEND'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture timeout transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var n=Number(pm.collectionVariables.get('timeoutAmount')); var m=pm.response.json().filter(function(t){return Number(t.amount)===n;}); pm.test('Timeout transaction found', function(){pm.expect(m.length).to.eql(1);}); if(m.length)pm.collectionVariables.set('timeoutTransactionId',m[0].transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Set existing transaction to Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/transactions/{{timeoutTransactionId}}/scenario"
+          }
+        },
+        {
+          "name": "GET reconciliation returns Approved",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/api/payments/{{timeoutAppPaymentId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Existing payment reconciled to Approved', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset scenario to Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - E29 throttling and manual retry",
+      "description": "Queue two throttles. Zapper automatically retries once; the first POST should return E29. Repeat the exact same POST with the same ID and amount to perform the supported manual retry.",
+      "item": [
+        {
+          "name": "Ensure default outcome is Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Queue two throttled requests",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"count\":2}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/throttle-next"
+          }
+        },
+        {
+          "name": "Submit payment (expect E29 after automatic retry)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{e29Amount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{e29AppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('e29AppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('e29Amount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('E29 returned after automatic retry', function () { pm.response.to.have.status(503); pm.expect(pm.response.json().code).to.eql('E29'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Manual retry with same ID and body",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{e29Amount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{e29AppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('E29 manual retry approved', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 - E50 gateway failure",
+      "description": "Demonstrates Acme's E50 gateway failure and restores the normal default scenario afterward.",
+      "item": [
+        {
+          "name": "Set GatewayFailure scenario",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"GatewayFailure\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Submit payment (expect E50)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{e50Amount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{e50AppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('e50AppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('e50Amount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Gateway failure is E50', function () { pm.response.to.have.status(502); pm.expect(pm.response.json().code).to.eql('E50'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reset scenario to Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - RRN collision (direct Acme stub)",
+      "description": "Zapper generates a fresh RRN per payment, so demonstrate the provider collision rule by calling Acme directly. Run the preparation and two POSTs in order. The requests share a 12-digit OrderNumber prefix but use different TransactionIDs.",
+      "item": [
+        {
+          "name": "Ensure default outcome is Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Prepare unique collision values",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var p=String(Date.now()).slice(-12); pm.collectionVariables.set('collisionOrderOne',p+'0001'); pm.collectionVariables.set('collisionOrderTwo',p+'0002'); pm.collectionVariables.set('collisionAmount',String(300 + Math.floor(Math.random() * 9701))); pm.collectionVariables.set('collisionFirstTransactionId',pm.variables.replaceIn('{{$guid}}')); pm.collectionVariables.set('collisionSecondTransactionId',pm.variables.replaceIn('{{$guid}}')); pm.collectionVariables.set('acmeMessageDateTime',new Date(Date.now()+120*60*1000).toISOString().replace('Z','')); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Acme stub reachable', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit first Acme payment (reserve RRN)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{acmeApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"MessageHeader\": {\n    \"MessageDateTime\": \"{{acmeMessageDateTime}}\",\n    \"MessageID\": \"{{$guid}}\",\n    \"Channel\": \"App\"\n  },\n  \"PaymentRequest\": {\n    \"MerchantID\": \"{{merchantId}}\",\n    \"TransactionID\": \"{{collisionFirstTransactionId}}\",\n    \"OrderNumber\": \"{{collisionOrderOne}}\",\n    \"Amount\": {{collisionAmount}},\n    \"CurrencyCode\": \"ZAR\",\n    \"PaymentService\": \"AcmeEft\",\n    \"SubMerchantID\": \"{{subMerchantId}}\",\n    \"MerchantCategoryCode\": \"5812\",\n    \"CardAcceptorName\": \"ZAP*Demo Merchant      Cape Town    WCZA\",\n    \"Email\": \"demo@example.test\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/api/payment"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('First provider request succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().PaymentResponse.ResponseDetail.Code).to.eql('00'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit second Acme payment (expect E09 collision)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{acmeApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"MessageHeader\": {\n    \"MessageDateTime\": \"{{acmeMessageDateTime}}\",\n    \"MessageID\": \"{{$guid}}\",\n    \"Channel\": \"App\"\n  },\n  \"PaymentRequest\": {\n    \"MerchantID\": \"{{merchantId}}\",\n    \"TransactionID\": \"{{collisionSecondTransactionId}}\",\n    \"OrderNumber\": \"{{collisionOrderTwo}}\",\n    \"Amount\": {{collisionAmount}},\n    \"CurrencyCode\": \"ZAR\",\n    \"PaymentService\": \"AcmeEft\",\n    \"SubMerchantID\": \"{{subMerchantId}}\",\n    \"MerchantCategoryCode\": \"5812\",\n    \"CardAcceptorName\": \"ZAP*Demo Merchant      Cape Town    WCZA\",\n    \"Email\": \"demo@example.test\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/api/payment"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('RRN collision returns HTTP 409', function () { pm.response.to.have.status(409); });",
+                  "pm.test('RRN collision returns E09 and original transaction ID', function () { var r=pm.response.json().PaymentResponse; pm.expect(r.ResponseDetail.Code).to.eql('E09'); pm.expect(r.TransactionID).to.eql(pm.collectionVariables.get('collisionFirstTransactionId')); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 - Provider query and daily report",
+      "description": "Self-contained closing demo: create and capture an approved payment for the authenticated Acme RTQ query, then request today's Zapper daily settlement summary. Seq UI is at http://localhost:5341.",
+      "item": [
+        {
+          "name": "Ensure default outcome is Approved",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"outcome\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{stubUrl}}/__control/default-scenario"
+          }
+        },
+        {
+          "name": "Create approved payment for provider query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"{{customerId}}\",\n  \"subMerchantId\": \"{{subMerchantId}}\",\n  \"amount\": {{queryAmount}},\n  \"currencyCode\": \"{{currencyCode}}\",\n  \"appPaymentId\": \"{{queryAppPaymentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{apiUrl}}/api/payments"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('queryAppPaymentId', pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.collectionVariables.set('queryAmount', String(10000 + Math.floor(Math.random() * 80000))); "
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Provider query source payment is approved', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture query transaction ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{stubUrl}}/__control/transactions"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var n=Number(pm.collectionVariables.get('queryAmount')); var m=pm.response.json().filter(function(t){return Number(t.amount)===n;}); pm.test('Query transaction found', function(){pm.expect(m.length).to.eql(1);}); if(m.length)pm.collectionVariables.set('queryTransactionId',m[0].transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Query Acme by TransactionID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{acmeApiKey}}"
+              }
+            ],
+            "url": "{{stubUrl}}/apirttq/query/Merchant/{{merchantId}}?TransactionID={{queryTransactionId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Acme RTQ returned the transaction', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().PaymentResponse.TransactionID).to.eql(pm.collectionVariables.get('queryTransactionId')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Daily settlement summary (today, SAST)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{apiUrl}}/api/reports/daily-summary?date={{businessDate}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var d=new Date(Date.now()+120*60*1000); pm.collectionVariables.set('businessDate', d.toISOString().slice(0,10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Daily summary returned', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
